@@ -38,6 +38,9 @@
 | Package named `monitoring`, API named `monitor` | a submodule named `monitor` would shadow the public callable on `from e2am import monitor` |
 | Leaderboard uses stdlib `csv` | the one artifact that must never fail should depend on nothing optional |
 | Results are pydantic models | lossless JSON round-trip: every report can be regenerated from `metrics.json` alone |
+| Artifacts carry `schema_version`, migrations are dict transforms | migrations must reshape data the *current* models would reject, so they run before validation and never import the models |
+| "Unset" is `None`, never a magic default value | a sentinel-by-value makes a legitimate user value indistinguishable from the default (475 g/kWh carbon intensity was exactly this bug) |
+| Durations come from `time.monotonic()` | wall-clock is display-only; energy is integrated on the monotonic clock, and any metric derived from both must share that time base or an NTP step corrupts it |
 
 ## Energy model
 
@@ -47,7 +50,9 @@
   TDP configurable via `monitor.cpu_tdp_w`.
 - **RAM**: ~3 W per 8 GB *used* (CodeCarbon convention).
 - **Carbon**: `kWh × grid intensity`, resolved as user override → country
-  table (27 countries, Ember/IEA 2023) → world average 475 g/kWh.
+  table (27 countries, Ember/IEA 2023) → world average 475 g/kWh. "User
+  override" means `carbon_intensity_g_per_kwh is not None` — an explicit
+  475.0 is a user override, not a default.
 
 ## Green AI metrics
 

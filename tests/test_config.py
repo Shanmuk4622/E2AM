@@ -12,7 +12,10 @@ def test_defaults_are_sensible() -> None:
     cfg = ExperimentConfig()
     assert cfg.project == "e2am"
     assert cfg.monitor.sampling_interval_s == 1.0
-    assert cfg.monitor.carbon.carbon_intensity_g_per_kwh > 0
+    # None means "not specified" — the estimator resolves it to the country
+    # table or the world average. A concrete default here would be a sentinel
+    # indistinguishable from a user pinning that same number.
+    assert cfg.monitor.carbon.carbon_intensity_g_per_kwh is None
     assert cfg.output.dir == Path("results")
     assert cfg.trainer.epochs == 10
 

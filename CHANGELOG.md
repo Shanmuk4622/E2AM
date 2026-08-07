@@ -4,6 +4,43 @@ All notable changes to E2AM are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+Groundwork for v2. Contains breaking changes, each with a migration.
+
+### Fixed
+
+- **Gradient clipping was skipped on a trailing partial accumulation window.**
+  When `len(train_loader) % gradient_accumulation_steps != 0`, the flush step
+  called `scaler.step()` without `unscale_()` + `clip_grad_norm_`, so every
+  epoch took one unclipped optimizer step. Both paths now share
+  `Trainer._optimizer_step()`.
+- **`duration_s` was measured on the wall clock while energy was integrated on
+  the monotonic clock.** A DST or NTP step mid-run desynced the two and
+  corrupted `avg_total_power_w` (an injected one-hour jump made a 0.2 s run
+  report "0.01 Wh over 3600.2 s"). Duration now comes from the same monotonic
+  time base the integrator uses.
+- **Carbon intensity used a sentinel-by-value.** "The user set it" was inferred
+  from the value differing from the 475 g/kWh world average, so a user in a
+  475 g/kWh grid could not pin that number — their country code silently
+  overrode it.
+
+### Changed (breaking)
+
+- `CarbonConfig.carbon_intensity_g_per_kwh` is now `float | None` defaulting to
+  `None` ("not specified") instead of `float` defaulting to `475.0`. Explicit
+  values — including 475.0 — now always win over the country lookup.
+
+### Added
+
+- **Artifact schema versioning** (`e2am.schema`). `metrics.json` and
+  `config.yaml` carry a `schema_version`; artifacts written by 0.1.x are
+  detected as v1 and migrated forward on load, preserving the meaning they
+  were written with. The v1→v2 config migration translates the old 475.0
+  sentinel back to `None`, so a legacy config with a country code still
+  resolves to that country's grid. Artifacts from a *newer* E2AM are refused
+  with an upgrade hint rather than silently misread.
+
 ## [0.1.0] — 2026-07-11
 
 First public release. 🌱

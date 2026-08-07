@@ -209,6 +209,42 @@ def test_gradient_accumulation_and_clipping(tmp_path: Path) -> None:
     assert losses[-1] < losses[0]
 
 
+def test_clipping_applied_to_trailing_accumulation_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A partial final window must be clipped like every other window.
+
+    3 batches with accum_steps=2 means one in-loop step (batches 0-1) and one
+    trailing flush (batch 2). Both must clip; the flush path used to step the
+    optimizer with unscaled, unclipped gradients.
+    """
+    calls: list[float] = []
+    real_clip = torch.nn.utils.clip_grad_norm_
+
+    def spy(parameters, max_norm, *args, **kwargs):
+        calls.append(max_norm)
+        return real_clip(parameters, max_norm, *args, **kwargs)
+
+    monkeypatch.setattr(torch.nn.utils, "clip_grad_norm_", spy)
+
+    # 96 samples / batch 32 = 3 batches per epoch, accum_steps=2 -> one partial.
+    train_loader, _ = _make_loaders(n=96, batch_size=32)
+    trainer = _make_trainer(
+        tmp_path,
+        train_loader=train_loader,
+        epochs=1,
+        monitor_enabled=False,
+        profile_enabled=False,
+        save_artifacts=False,
+    )
+    trainer._accum_steps = 2
+    trainer._max_grad_norm = 1.0
+    trainer.fit()
+
+    assert len(calls) == 2, f"expected clipping on both windows, got {len(calls)}"
+    assert all(norm == 1.0 for norm in calls)
+
+
 def test_invalid_task_raises(tmp_path: Path) -> None:
     model = nn.Linear(2, 2)
     with pytest.raises(TrainerError, match="task"):

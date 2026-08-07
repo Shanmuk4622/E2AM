@@ -203,12 +203,17 @@ def benchmark(
 
 def _load_result(run_dir: Path) -> TrainingResult | MonitorResult:
     from e2am.monitoring.result import MonitorResult
+    from e2am.schema import migrate
     from e2am.trainer.result import TrainingResult
 
     metrics = run_dir / "metrics.json"
     if not metrics.exists():
         _fail(f"No metrics.json in {run_dir}")
     data = json.loads(metrics.read_text(encoding="utf-8"))
+    try:
+        data = migrate(data, "result")
+    except E2AMError as exc:
+        _fail(str(exc))
     if "epochs_requested" in data:
         return TrainingResult.model_validate(data)
     return MonitorResult.model_validate(data)

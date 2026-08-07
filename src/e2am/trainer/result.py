@@ -7,6 +7,7 @@ one JSON-serializable object that reports are generated from.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +16,16 @@ from pydantic import BaseModel, Field
 
 from e2am.metrics.green import GreenMetrics
 from e2am.monitoring.result import MonitorResult
+from e2am.schema import SCHEMA_VERSION, migrate
 
 
 class TrainingResult(BaseModel):
     """Complete outcome of one training run."""
 
+    schema_version: int = Field(
+        default=SCHEMA_VERSION,
+        description="Artifact schema version; see e2am.schema for migrations.",
+    )
     project: str = "e2am"
     run_name: str = ""
     status: str = Field(default="completed", description="'completed', 'stopped', or 'failed'.")
@@ -110,6 +116,11 @@ class TrainingResult(BaseModel):
 
     @classmethod
     def load(cls, run_dir: str | Path) -> TrainingResult:
-        """Load a result previously saved with :meth:`save`."""
+        """Load a result previously saved with :meth:`save`.
+
+        Artifacts from older E2AM releases are migrated forward on the way in
+        (see :mod:`e2am.schema`), so runs recorded with 0.1.x still open here.
+        """
         path = Path(run_dir) / "metrics.json"
-        return cls.model_validate_json(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return cls.model_validate(migrate(data, "result"))

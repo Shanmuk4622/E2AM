@@ -220,7 +220,14 @@ class MonitorSession:
     def _build_result(self) -> MonitorResult:
         assert self._started_at is not None
         ended_at = datetime.now(timezone.utc)
-        duration = (ended_at - self._started_at).total_seconds()
+        # Duration is measured on the same monotonic clock the integrator
+        # integrates against — never wall-clock. A DST or NTP step mid-run
+        # would otherwise desync duration_s from the energy time base and
+        # silently corrupt avg_total_power_w. The last recorded timestamp is
+        # exactly the span energy was integrated over.
+        with self._lock:
+            last_t = self._series.timestamps_s[-1] if self._series.timestamps_s else None
+        duration = last_t if last_t is not None else time.monotonic() - self._t0_monotonic
 
         devices: list[DeviceEnergy] = []
         utilization: dict[str, UtilizationStats] = {}

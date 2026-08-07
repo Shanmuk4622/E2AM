@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from e2am.monitoring.carbon import CarbonResult
 from e2am.monitoring.energy import joules_to_kwh, joules_to_wh
+from e2am.schema import SCHEMA_VERSION
 from e2am.utils.hardware import SystemInfo
 
 
@@ -55,6 +56,10 @@ class TimeSeriesData(BaseModel):
 class MonitorResult(BaseModel):
     """Complete outcome of one monitoring session."""
 
+    schema_version: int = Field(
+        default=SCHEMA_VERSION,
+        description="Artifact schema version; see e2am.schema for migrations.",
+    )
     project: str = "e2am"
     run_name: str = ""
     status: str = Field(default="completed", description="'completed' or 'failed'.")

@@ -15,6 +15,7 @@ import yaml
 from pydantic import BaseModel, Field, field_validator
 
 from e2am.exceptions import ConfigError
+from e2am.schema import SCHEMA_VERSION, migrate
 
 #: Global average grid carbon intensity in gCO2eq/kWh (IEA 2023 estimate).
 WORLD_AVG_CARBON_INTENSITY = 475.0
@@ -27,11 +28,12 @@ class CarbonConfig(BaseModel):
         default=None,
         description="ISO 3166 country code (e.g. 'IND', 'USA') for region-aware intensity.",
     )
-    carbon_intensity_g_per_kwh: float = Field(
-        default=WORLD_AVG_CARBON_INTENSITY,
+    carbon_intensity_g_per_kwh: float | None = Field(
+        default=None,
         gt=0,
-        description="Grid carbon intensity in gCO2eq/kWh. Overridden by "
-        "region lookup when a country code is set and lookup data is available.",
+        description="Explicit grid carbon intensity in gCO2eq/kWh. When set it "
+        "wins over the country lookup; None means 'not specified', so the "
+        "country code (else the world average) decides.",
     )
 
 
@@ -96,6 +98,10 @@ class TrainerConfig(BaseModel):
 class ExperimentConfig(BaseModel):
     """Top-level configuration for one experiment run."""
 
+    schema_version: int = Field(
+        default=SCHEMA_VERSION,
+        description="Artifact schema version; see e2am.schema for migrations.",
+    )
     project: str = Field(default="e2am", min_length=1)
     run_name: str | None = Field(
         default=None,
@@ -131,8 +137,13 @@ class ExperimentConfig(BaseModel):
             path: Path to a YAML file produced by :meth:`to_yaml` or written
                 by hand.
 
+        Configs written by older E2AM releases are migrated forward on load
+        (see :mod:`e2am.schema`), preserving the meaning they were written
+        with.
+
         Raises:
-            ConfigError: If the file is missing, unparsable, or invalid.
+            ConfigError: If the file is missing, unparsable, invalid, or was
+                written by a newer E2AM than this one.
         """
         path = Path(path)
         if not path.exists():
@@ -141,6 +152,9 @@ class ExperimentConfig(BaseModel):
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError as exc:
             raise ConfigError(f"Invalid YAML in {path}: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ConfigError(f"Invalid configuration in {path}: expected a YAML mapping.")
+        data = migrate(data, "config")
         try:
             return cls.model_validate(data)
         except Exception as exc:

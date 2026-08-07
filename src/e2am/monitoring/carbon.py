@@ -78,7 +78,10 @@ class CarbonEstimator:
 
     def _resolve_intensity(self) -> tuple[float, str]:
         cfg = self.config
-        if cfg.carbon_intensity_g_per_kwh != WORLD_AVG_CARBON_INTENSITY:
+        # Explicit None (not a magic value) means "user did not specify": a
+        # user living in a 475 g/kWh grid must be able to pin that number and
+        # still have it beat their country code.
+        if cfg.carbon_intensity_g_per_kwh is not None:
             return cfg.carbon_intensity_g_per_kwh, "user"
         if cfg.country_iso_code:
             code = cfg.country_iso_code.strip().upper()

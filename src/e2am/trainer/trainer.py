@@ -368,6 +368,20 @@ class Trainer:
         moved = _move_to_device(batch, self.device)
         return moved[0], moved[1]
 
+    def _optimizer_step(self) -> None:
+        """Clip, step, and reset gradients for one accumulation window.
+
+        Shared by the in-loop path and the trailing-window flush so gradient
+        clipping cannot be skipped when the batch count is not a multiple of
+        ``gradient_accumulation_steps``.
+        """
+        if self._max_grad_norm is not None:
+            self._scaler.unscale_(self.optimizer)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self._max_grad_norm)
+        self._scaler.step(self.optimizer)
+        self._scaler.update()
+        self.optimizer.zero_grad(set_to_none=True)
+
     def _train_epoch(self, epoch: int) -> tuple[float, int, list[float]]:
         self.model.train()
         total_loss = 0.0
@@ -388,12 +402,7 @@ class Trainer:
             self._scaler.scale(scaled).backward()
 
             if (batch_idx + 1) % self._accum_steps == 0:
-                if self._max_grad_norm is not None:
-                    self._scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self._max_grad_norm)
-                self._scaler.step(self.optimizer)
-                self._scaler.update()
-                self.optimizer.zero_grad(set_to_none=True)
+                self._optimizer_step()
 
             batch_size = int(targets.shape[0]) if targets.dim() else 1
             batch_loss = float(loss.detach())
@@ -408,11 +417,9 @@ class Trainer:
                 {"loss": batch_loss, "batch_time_ms": batch_time_ms},
             )
 
-        # Flush a trailing partial accumulation window.
+        # Flush a trailing partial accumulation window (same clipping path).
         if total_samples and (batch_idx + 1) % self._accum_steps != 0:
-            self._scaler.step(self.optimizer)
-            self._scaler.update()
-            self.optimizer.zero_grad(set_to_none=True)
+            self._optimizer_step()
 
         if total_samples == 0:
             raise TrainerError("train_loader yielded no batches.")

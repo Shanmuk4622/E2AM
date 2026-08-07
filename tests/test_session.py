@@ -1,6 +1,7 @@
 """MonitorSession tests using injected fake samplers for exact arithmetic."""
 
 import time
+from datetime import timedelta
 
 import pytest
 
@@ -106,6 +107,42 @@ def test_exploding_sampler_does_not_crash_session() -> None:
     bad = next(d for d in result.devices if d.name == "bad")
     assert ok.energy_j > 0
     assert bad.energy_j == 0.0
+
+
+def test_duration_uses_monotonic_not_wall_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wall-clock jump mid-run must not distort duration_s or avg power.
+
+    duration_s anchors avg_total_power_w, so if it came from datetime.now()
+    an NTP/DST step during a long run would silently corrupt the headline
+    watt number while the energy integral (monotonic) stayed correct.
+    """
+    import e2am.monitoring.session as session_mod
+
+    real_datetime = session_mod.datetime
+
+    class JumpingDatetime:
+        """Wall clock that leaps an hour forward after the run starts."""
+
+        calls = 0
+
+        @classmethod
+        def now(cls, tz=None):
+            cls.calls += 1
+            base = real_datetime.now(tz)
+            return base if cls.calls == 1 else base + timedelta(hours=1)
+
+    monkeypatch.setattr(session_mod, "datetime", JumpingDatetime)
+
+    session = MonitorSession(config=_fast_config(), samplers=[ConstantSampler(power_w=100.0)])
+    session.start()
+    time.sleep(0.2)
+    result = session.stop()
+
+    # Real elapsed time is a fraction of a second, not the hour the wall clock
+    # claims to have passed.
+    assert result.duration_s < 5.0
+    # Energy and duration share a time base, so average power stays truthful.
+    assert result.avg_total_power_w == pytest.approx(100.0, rel=0.2)
 
 
 def test_double_start_raises() -> None:
