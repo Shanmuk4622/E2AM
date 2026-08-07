@@ -31,6 +31,25 @@ Groundwork for v2. Contains breaking changes, each with a migration.
   `None` ("not specified") instead of `float` defaulting to `475.0`. Explicit
   values — including 475.0 — now always win over the country lookup.
 
+### CI
+
+- **CI was running roughly two thirds of the test suite and reporting green.**
+  `pip install -e ".[dev]"` never brought PyTorch (it is deliberately a peer
+  dependency), so every torch-backed test file skipped itself: 53 of 171 tests
+  — the whole `Trainer`, all of `profiler/`, classification metrics, every
+  plugin, the Hugging Face integration, and `e2am train`/`benchmark` — had
+  never executed on a runner. The test matrix now installs CPU-only PyTorch and
+  transformers, and asserts they are importable so a broken install fails loudly
+  instead of silently reverting to a hollow green run.
+- Added a dedicated `test-without-torch` job. The "monitoring works without
+  PyTorch" promise used to hold only by accident, because every runner happened
+  to lack torch; it is now covered on purpose, including an `import e2am` +
+  `monitor()` + CLI smoke test.
+- Added a guard that `import e2am` does not eagerly import torch, which only
+  has teeth on a runner where torch is installed.
+- Added pip caching and `concurrency: cancel-in-progress` to offset the added
+  install time.
+
 ### Added
 
 - **Artifact schema versioning** (`e2am.schema`). `metrics.json` and

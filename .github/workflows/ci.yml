@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push to the same branch makes the in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -14,6 +19,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: pip install -e ".[dev]"
       - name: Ruff
@@ -26,6 +33,7 @@ jobs:
         run: mypy src/e2am
 
   test:
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -42,7 +50,81 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - name: Install
         run: pip install -e ".[dev]"
+
+      # torch is deliberately a peer dependency, so ".[dev]" does not bring it.
+      # Without this step every torch-backed test (Trainer, profiler, metrics,
+      # plugins, HF, `e2am train`/`benchmark`) importorskips itself away and CI
+      # goes green having exercised roughly two thirds of the library.
+      # The CPU index keeps the wheel small — CI runners have no GPU.
+      - name: Install CPU PyTorch (test-only peer dependency)
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install transformers (test-only peer dependency)
+        run: pip install transformers
+
+      # If either install above ever silently stops working, the suite would
+      # degrade straight back to a green-but-hollow run: every torch test would
+      # importorskip itself and pytest would still exit 0. Asserting the
+      # imports here turns that silent degradation into a hard failure.
+      - name: Guard — test peers must really be importable
+        run: python -c "import torch, transformers; print('torch', torch.__version__, '| transformers', transformers.__version__)"
+
+      # `import e2am` must stay torch-free even when torch IS installed; this
+      # check only has teeth on a runner that has it.
+      - name: Guard — importing e2am must not eagerly import torch
+        run: python -c "import sys, e2am; assert 'torch' not in sys.modules, 'e2am eagerly imported torch'; print('lazy import OK')"
+
       - name: Run tests (no GPU on CI runners)
         run: pytest -m "not gpu" --cov=e2am --cov-report=term-missing
+
+  test-without-torch:
+    # E2AM promises monitoring works on machines with no PyTorch. That promise
+    # used to be covered only by accident (every runner lacked torch); now that
+    # the matrix installs it, this job is what actually holds the line.
+    name: test (no torch — graceful degradation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install without torch
+        run: pip install -e ".[dev]"
+      - name: Confirm torch really is absent
+        run: |
+          python - <<'PY'
+          try:
+              import torch  # noqa: F401
+          except ImportError:
+              print("torch absent as intended")
+          else:
+              raise SystemExit("torch leaked into the no-torch job; it no longer proves anything")
+          PY
+
+      - name: Core promise — import, monitor, and CLI work without torch
+        run: |
+          python - <<'PY'
+          import time
+
+          import e2am
+
+          print("e2am", e2am.__version__)
+          with e2am.monitor(project="ci-no-torch", save=False, summary=False, interval_s=0.05) as m:
+              time.sleep(0.3)  # let the sampler take real samples
+          assert m.result is not None, "monitor() produced no result"
+          assert m.result.num_samples > 1, f"only {m.result.num_samples} sample(s) taken"
+          assert m.result.total_energy_j > 0, "no energy recorded without torch"
+          print(f"monitoring works without torch: {m.result.total_energy_wh:.6f} Wh")
+          PY
+          e2am hardware --json > /dev/null
+          e2am version
+
+      # Torch-backed tests self-skip here; anything that needs torch without
+      # declaring it will error instead, which is what we want to hear about.
+      - name: Run the torch-free suite
+        run: pytest -m "not gpu"
