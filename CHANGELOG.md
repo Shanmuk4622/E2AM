@@ -4,7 +4,7 @@ All notable changes to E2AM are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/) and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.0] — 2026-08-25
 
 Groundwork for v2. Contains breaking changes, each with a migration.
 
